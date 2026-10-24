@@ -1,5 +1,6 @@
 package com.v2ray.ang.ui.main
 
+import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
@@ -15,6 +16,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.dto.entities.ProfileItem
+import com.v2ray.ang.dto.entities.SubscriptionItem
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.enums.PermissionType
 import com.v2ray.ang.extension.toast
@@ -90,12 +92,45 @@ class MainActivity : HelperBaseComponentActivity() {
             if (refreshGroups) mainViewModel.onAction(MainAction.RefreshGroups)
             if (restartService) LauncherManager.restartService(this)
         }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         mainViewModel.onAction(MainAction.Initialize)
 
         checkAndRequestPermission(PermissionType.POST_NOTIFICATIONS) {}
+
+        // 初次启动自动导入订阅
+        initDefaultSubscription()
+    }
+
+    private fun initDefaultSubscription() {
+        val DEFAULT_SUB_URL = "https://wziheng.cc.cd/sub/6dsd81pvsb4iacox-fx26ve7jnl4p.yaml"
+        val DEFAULT_SUB_NAME = "静态原生住宅"
+
+        val sp = getSharedPreferences("custom_auto_sub", Context.MODE_PRIVATE)
+        val hasImported = sp.getBoolean("has_imported", false)
+
+        if (!hasImported && DEFAULT_SUB_URL.startsWith("http")) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val subItem = SubscriptionItem().apply {
+                        remarks = DEFAULT_SUB_NAME
+                        url = DEFAULT_SUB_URL
+                        enabled = true
+                    }
+                    val subId = MmkvManager.encodeSubscription(subItem)
+                    if (!subId.isNullOrEmpty()) {
+                        sp.edit().putBoolean("has_imported", true).apply()
+                        AngConfigManager.updateConfigViaSub(this@MainActivity, subItem)
+                        withContext(Dispatchers.Main) {
+                            mainViewModel.onAction(MainAction.RefreshGroups)
+                            mainViewModel.onAction(MainAction.ReloadServerList)
+                        }
+                    }
+                } catch (e: Exception) {
+                    LogUtil.e(AppConfig.TAG, "Auto import subscription failed", e)
+                }
+            }
+        }
     }
 
     @Composable
@@ -124,7 +159,6 @@ class MainActivity : HelperBaseComponentActivity() {
             onNavigate = { route -> navigateTo(route) },
         )
     }
-
     private fun shareToClipboard(guid: String): Boolean =
         AngConfigManager.share2Clipboard(this, guid) == 0
 
@@ -139,7 +173,6 @@ class MainActivity : HelperBaseComponentActivity() {
     }
 
     private fun openSubscriptionLink(url: String) {
-        // Links come from a remote panel, so only http(s) and tg:// are ever handed to ACTION_VIEW.
         val safeUrl = SubscriptionInfoParser.sanitizeLink(url) ?: return
         Utils.openUri(this, safeUrl)
     }
@@ -194,8 +227,7 @@ class MainActivity : HelperBaseComponentActivity() {
             toast(R.string.title_file_chooser)
             return
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN
-        ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN) {
             checkAndRequestPermission(PermissionType.ACCESS_LOCAL_NETWORK) {}
         }
         LauncherManager.startService(this)
